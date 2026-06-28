@@ -1,0 +1,46 @@
+{
+  "name": "codexgpt",
+  "version": "0.0.0",
+  "description": "Send prompts and local files from Codex to ChatGPT web in Safari, Chrome, or Chromium, then return visible responses and local result paths.",
+  "author": {
+    "name": "Lindsay Zhao"
+  },
+  "homepage": "https://github.com/Croquembouche/codexgpt",
+  "repository": "https://github.com/Croquembouche/codexgpt",
+  "license": "MIT",
+  "keywords": [
+    "chatgpt",
+    "safari",
+    "chrome",
+    "chromium",
+    "ubuntu",
+    "handoff",
+    "browser",
+    "codex",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "CodexGPT Bridge",
+    "shortDescription": "Round-trip Codex prompts and files through ChatGPT web in Safari, Chrome, or Chromium",
+    "longDescription": "Use CodexGPT Bridge to hand text, Markdown, JSON, code, images, PDFs, and other local files from Codex to a logged-in ChatGPT web UI in Safari, Chrome, or Chromium. It keeps one ChatGPT web chat per Codex conversation unless a fresh chat is requested, then returns visible response text and local run artifact paths. On Ubuntu/Linux, Chrome/Chromium is controlled through a local Chrome DevTools connection. CodexGPT Bridge is community tooling and is not an official OpenAI product.",
+    "developerName": "Lindsay Zhao",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Croquembouche/codexgpt",
+    "privacyPolicyURL": "https://openai.com/policies/privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
+    "defaultPrompt": [
+      "Send this draft to ChatGPT web for review.",
+      "Upload these files to ChatGPT web.",
+      "Start a new ChatGPT web chat for this task."
+    ],
+    "brandColor": "#10A37F",
+    "screenshots": []
+  }
+}

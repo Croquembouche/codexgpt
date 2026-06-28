@@ -1,0 +1,279 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from codexgpt_bridge.safari import (
+    ChromeChatGPTClient,
+    LinuxChromeChatGPTClient,
+    SafariChatGPTClient,
+    build_assert_chatgpt_page_javascript,
+    build_choose_file_applescript,
+    build_chrome_javascript_applescript,
+    build_composer_plus_rect_javascript,
+    build_extract_response_javascript,
+    build_focus_composer_javascript,
+    build_inject_file_javascript,
+    build_open_file_picker_applescript,
+    build_generation_state_javascript,
+    build_linux_chrome_launch_args,
+    build_open_chrome_chat_applescript,
+    build_open_chat_applescript,
+    build_paste_and_submit_applescript,
+    build_prompt_javascript,
+    classify_javascript_permission_error,
+    normalize_browser_name,
+    normalize_extracted_response,
+)
+
+
+class ImageOnlySafariClient(SafariChatGPTClient):
+    def __init__(self):
+        super().__init__(wait_interval_sec=0)
+        self.calls = 0
+
+    def extract_latest_response(self):
+        self.calls += 1
+        return {
+            "url": "https://chatgpt.com/c/image",
+            "title": "Image",
+            "text": "",
+            "html": "",
+            "has_assistant": True,
+            "downloadable": [],
+            "images": [{"src": "blob:https://chatgpt.com/image", "alt": "cat"}],
+            "has_visual_output": True,
+        }
+
+    def _is_generating(self):
+        return False
+
+
+class RecordingFileInjectionSafariClient(SafariChatGPTClient):
+    file_upload_chunk_size = 8
+
+    def __init__(self, expected_size):
+        super().__init__(wait_interval_sec=0)
+        self.expected_size = expected_size
+        self.scripts = []
+        self.upload_settle_sec = 0
+
+    def _run_js(self, javascript, timeout=30):
+        self.scripts.append(javascript)
+        return json.dumps({"ok": True, "size": self.expected_size, "files": 1})
+
+
+class RecordingLinuxChromeClient(LinuxChromeChatGPTClient):
+    def __init__(self):
+        super().__init__(wait_interval_sec=0)
+        self.scripts = []
+
+    def assert_chatgpt_page(self):
+        return None
+
+    def _run_js(self, javascript, timeout=30):
+        self.scripts.append((javascript, timeout))
+        return json.dumps({"ok": True, "url": "https://chatgpt.com/c/linux"})
+
+
+class SafariScriptTests(unittest.TestCase):
+    def test_prompt_javascript_json_encodes_prompt_content(self):
+        prompt = 'Line 1\n"quoted" and backslash \\ content'
+
+        script = build_prompt_javascript(prompt)
+
+        self.assertIn(json.dumps(prompt), script)
+        self.assertIn("prompt-textarea", script)
+        self.assertIn("send-button", script)
+
+    def test_open_chat_applescript_activates_safari_for_focused_mode(self):
+        script = build_open_chat_applescript("https://chatgpt.com/")
+
+        self.assertIn('tell application "Safari"', script)
+        self.assertIn("activate", script)
+        self.assertIn("make new document", script)
+
+    def test_open_chrome_chat_applescript_activates_chrome_and_new_tab(self):
+        script = build_open_chrome_chat_applescript("https://chatgpt.com/")
+
+        self.assertIn('tell application "Google Chrome"', script)
+        self.assertIn("activate", script)
+        self.assertIn("make new tab", script)
+        self.assertIn("active tab index", script)
+
+    def test_chrome_javascript_applescript_executes_active_tab(self):
+        script = build_chrome_javascript_applescript("'ok'")
+
+        self.assertIn('tell application "Google Chrome"', script)
+        self.assertIn("execute active tab of front window javascript", script)
+        self.assertIn("'ok'", script)
+
+    def test_chrome_client_uses_chrome_javascript_wrapper(self):
+        client = ChromeChatGPTClient()
+
+        script = client.build_javascript_applescript("'ok'")
+
+        self.assertIn('tell application "Google Chrome"', script)
+        self.assertIn("execute active tab", script)
+
+    def test_browser_name_normalization_accepts_safari_and_chrome(self):
+        self.assertEqual(normalize_browser_name(None), "safari")
+        self.assertEqual(normalize_browser_name("Safari"), "safari")
+        self.assertEqual(normalize_browser_name("google-chrome"), "chrome")
+        self.assertEqual(normalize_browser_name("Chrome"), "chrome")
+        self.assertEqual(normalize_browser_name("chromium"), "chrome")
+        self.assertEqual(normalize_browser_name("chromium-browser"), "chrome")
+        with self.assertRaises(ValueError):
+            normalize_browser_name("firefox")
+
+    def test_linux_chrome_launch_args_enable_remote_debugging_and_profile(self):
+        args = build_linux_chrome_launch_args(
+            executable="/usr/bin/chromium",
+            port=9222,
+            user_data_dir=Path("/tmp/chatgpt-bridge-profile"),
+            initial_url="https://chatgpt.com/",
+        )
+
+        self.assertEqual(args[0], "/usr/bin/chromium")
+        self.assertIn("--remote-debugging-port=9222", args)
+        self.assertIn("--user-data-dir=/tmp/chatgpt-bridge-profile", args)
+        self.assertIn("--no-first-run", args)
+        self.assertEqual(args[-1], "https://chatgpt.com/")
+
+    def test_linux_chrome_client_submits_prompt_with_javascript(self):
+        client = RecordingLinuxChromeClient()
+
+        client.submit_prompt("Hello from Ubuntu")
+
+        self.assertEqual(len(client.scripts), 1)
+        self.assertIn("Hello from Ubuntu", client.scripts[0][0])
+        self.assertIn("send-button", client.scripts[0][0])
+
+    def test_focus_composer_javascript_targets_prompt_editor(self):
+        script = build_focus_composer_javascript()
+
+        self.assertIn("prompt-textarea", script)
+        self.assertIn("composer.focus", script)
+
+    def test_paste_and_submit_applescript_uses_clipboard_and_return(self):
+        script = build_paste_and_submit_applescript()
+
+        self.assertIn('keystroke "v" using {command down}', script)
+        self.assertIn("key code 36", script)
+
+    def test_composer_plus_rect_javascript_returns_screen_coordinates(self):
+        script = build_composer_plus_rect_javascript()
+
+        self.assertIn("composer-plus-btn", script)
+        self.assertIn("window.screenX", script)
+        self.assertIn("outerHeight", script)
+        self.assertIn("innerHeight", script)
+
+    def test_open_file_picker_applescript_clicks_plus_and_accepts_menu_item(self):
+        script = build_open_file_picker_applescript(722, 907)
+
+        self.assertIn("click at {722, 907}", script)
+        self.assertIn("click at {760, 461}", script)
+
+    def test_choose_file_applescript_uses_go_to_path_and_clipboard_paste(self):
+        script = build_choose_file_applescript()
+
+        self.assertIn('keystroke "g" using {command down, shift down}', script)
+        self.assertIn('keystroke "a" using {command down}', script)
+        self.assertIn('keystroke "v" using {command down}', script)
+
+    def test_inject_file_javascript_assigns_file_to_upload_input(self):
+        script = build_inject_file_javascript("brief.md", "text/markdown", "SGVsbG8=")
+
+        self.assertIn("upload-files", script)
+        self.assertIn("DataTransfer", script)
+        self.assertIn("new File", script)
+        self.assertIn(json.dumps("brief.md"), script)
+        self.assertIn(json.dumps("text/markdown"), script)
+        self.assertIn("dispatchEvent(new Event('change'", script)
+
+    def test_inject_file_sends_large_content_in_small_chunks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "paper.pdf"
+            path.write_bytes(b"%PDF-" + (b"large-pdf-content" * 5))
+            client = RecordingFileInjectionSafariClient(path.stat().st_size)
+
+            client._inject_file(path)
+
+        append_scripts = [script for script in client.scripts if ".chunks.push" in script]
+        self.assertGreater(len(append_scripts), 1)
+        self.assertTrue(all(len(script) < 2000 for script in append_scripts))
+        self.assertIn(json.dumps("paper.pdf"), client.scripts[-1])
+        self.assertIn(json.dumps("application/pdf"), client.scripts[-1])
+
+    def test_extract_response_javascript_targets_assistant_messages(self):
+        script = build_extract_response_javascript()
+
+        self.assertIn('data-message-author-role="assistant"', script)
+        self.assertIn("innerText", script)
+        self.assertIn("hasVisualOutput", script)
+        self.assertIn("querySelectorAll('img')", script)
+        self.assertNotIn("document.body;", script)
+
+    def test_assert_chatgpt_page_javascript_requires_chatgpt_host(self):
+        script = build_assert_chatgpt_page_javascript()
+
+        self.assertIn("chatgpt.com", script)
+        self.assertIn("location.hostname", script)
+
+    def test_generation_state_javascript_detects_finalizing_and_stop(self):
+        script = build_generation_state_javascript()
+
+        self.assertIn("Finalizing answer", script)
+        self.assertIn("stop-button", script)
+
+    def test_normalize_extracted_response_parses_json_payload(self):
+        raw = json.dumps(
+            {
+                "url": "https://chatgpt.com/c/abc",
+                "title": "ChatGPT",
+                "text": "Finished response",
+                "html": "<p>Finished response</p>",
+            }
+        )
+
+        normalized = normalize_extracted_response(raw)
+
+        self.assertEqual(normalized["url"], "https://chatgpt.com/c/abc")
+        self.assertEqual(normalized["text"], "Finished response")
+
+    def test_normalize_extracted_response_preserves_visual_outputs(self):
+        raw = json.dumps(
+            {
+                "url": "https://chatgpt.com/c/image",
+                "title": "Image",
+                "text": "",
+                "html": "",
+                "hasAssistant": True,
+                "hasVisualOutput": True,
+                "images": [{"src": "blob:https://chatgpt.com/image", "alt": "cat"}],
+            }
+        )
+
+        normalized = normalize_extracted_response(raw)
+
+        self.assertTrue(normalized["has_visual_output"])
+        self.assertEqual(normalized["images"][0]["alt"], "cat")
+
+    def test_wait_for_response_accepts_image_only_assistant_output(self):
+        client = ImageOnlySafariClient()
+
+        response = client.wait_for_response(timeout_sec=1)
+
+        self.assertTrue(response["has_visual_output"])
+        self.assertGreaterEqual(client.calls, 2)
+
+    def test_classifies_disabled_javascript_from_apple_events(self):
+        message = "You must enable 'Allow JavaScript from Apple Events' in the Developer section"
+
+        self.assertEqual(classify_javascript_permission_error(message), "disabled")
+        self.assertEqual(classify_javascript_permission_error("other error"), "unknown")
+
+
+if __name__ == "__main__":
+    unittest.main()
