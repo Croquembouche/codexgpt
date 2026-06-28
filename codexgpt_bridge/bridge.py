@@ -10,6 +10,7 @@ from .safari import (
     ChromeChatGPTClient,
     LinuxChromeChatGPTClient,
     MacOSFocusManager,
+    NoOpFocusManager,
     SafariChatGPTClient,
     check_chrome_javascript_from_apple_events,
     check_javascript_from_apple_events,
@@ -26,20 +27,27 @@ def create_default_chrome_client(platform_name: Optional[str] = None):
     return ChromeChatGPTClient()
 
 
+def create_default_focus_manager(platform_name: Optional[str] = None):
+    platform_value = platform_name or sys.platform
+    if platform_value.startswith("darwin"):
+        return MacOSFocusManager()
+    return NoOpFocusManager()
+
+
 class ChatGPTBridge:
     def __init__(
         self,
         state_root: Optional[Path] = None,
         safari_client: Optional[SafariChatGPTClient] = None,
         chrome_client: Optional[ChromeChatGPTClient] = None,
-        focus_manager: Optional[MacOSFocusManager] = None,
+        focus_manager: Optional[Any] = None,
         platform_name: Optional[str] = None,
     ):
         self.platform_name = platform_name or sys.platform
         self.state = BridgeState(state_root)
         self.safari_client = safari_client or SafariChatGPTClient()
         self.chrome_client = chrome_client or create_default_chrome_client(self.platform_name)
-        self.focus_manager = focus_manager or MacOSFocusManager()
+        self.focus_manager = focus_manager or create_default_focus_manager(self.platform_name)
 
     def status(self, conversation_key: Optional[str] = None) -> Dict[str, Any]:
         status: Dict[str, Any] = {

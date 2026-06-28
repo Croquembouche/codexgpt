@@ -53,7 +53,18 @@ Install Chrome or Chromium, then ask Codex to use:
 {"browser": "chrome"}
 ```
 
-The first run opens a dedicated CodexGPT browser profile. Log into ChatGPT in that window once. Later runs reuse the same profile.
+By default, the first run opens a dedicated CodexGPT browser profile. Log into ChatGPT in that window once. Later runs reuse that profile.
+
+If you want CodexGPT to use an existing Linux Chrome profile, choose the Chrome profile before the live run and set both values:
+
+```bash
+export CODEXGPT_CHROME_USER_DATA_DIR="$HOME/.config/google-chrome"
+export CODEXGPT_CHROME_PROFILE_DIRECTORY="Profile 1"
+```
+
+Ask the user which Chrome profile to use when more than one local profile exists. Chrome profile folder names are often generic, such as `Default` or `Profile 1`, so confirm the visible profile name before choosing one.
+
+If that profile is already open in a normal Chrome session, Chrome may reuse the existing browser and skip the requested DevTools port. Close that Chrome profile first, or start it with the same `CODEXGPT_CHROME_CDP_PORT` remote-debugging port before invoking CodexGPT.
 
 ## How To Use It
 

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from codexgpt_bridge.bridge import ChatGPTBridge
-from codexgpt_bridge.safari import LinuxChromeChatGPTClient
+from codexgpt_bridge.safari import LinuxChromeChatGPTClient, MacOSFocusManager, NoOpFocusManager
 
 
 class FakeSafariClient:
@@ -202,6 +202,18 @@ class ChatGPTBridgeTests(unittest.TestCase):
             bridge = ChatGPTBridge(state_root=Path(tmp), platform_name="linux")
 
             self.assertIsInstance(bridge.chrome_client, LinuxChromeChatGPTClient)
+
+    def test_linux_platform_uses_noop_focus_manager_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge = ChatGPTBridge(state_root=Path(tmp), platform_name="linux")
+
+            self.assertIsInstance(bridge.focus_manager, NoOpFocusManager)
+
+    def test_darwin_platform_uses_macos_focus_manager_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge = ChatGPTBridge(state_root=Path(tmp), platform_name="darwin")
+
+            self.assertIsInstance(bridge.focus_manager, MacOSFocusManager)
 
 
 if __name__ == "__main__":

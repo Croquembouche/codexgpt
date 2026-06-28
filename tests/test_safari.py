@@ -131,12 +131,14 @@ class SafariScriptTests(unittest.TestCase):
             executable="/usr/bin/chromium",
             port=9222,
             user_data_dir=Path("/tmp/chatgpt-bridge-profile"),
+            profile_directory="Profile 1",
             initial_url="https://chatgpt.com/",
         )
 
         self.assertEqual(args[0], "/usr/bin/chromium")
         self.assertIn("--remote-debugging-port=9222", args)
         self.assertIn("--user-data-dir=/tmp/chatgpt-bridge-profile", args)
+        self.assertIn("--profile-directory=Profile 1", args)
         self.assertIn("--no-first-run", args)
         self.assertEqual(args[-1], "https://chatgpt.com/")
 

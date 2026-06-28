@@ -32,7 +32,9 @@ The bridge accepts:
 
 This is browser automation, not a web API. It cannot bypass login, CAPTCHA, rate limits, file-size limits, model limits, or UI changes. If the selected browser is logged out or ChatGPT changes its selectors, return the recovery message and ask the user to fix the visible browser state.
 
-On Ubuntu/Linux, the first Chrome/Chromium run opens a dedicated bridge browser profile at `~/.codex/state/codexgpt/chrome-linux-profile`. The user must log into ChatGPT in that profile once; subsequent runs reuse it.
+On Ubuntu/Linux, the first Chrome/Chromium run opens a dedicated bridge browser profile at `~/.codex/state/codexgpt/chrome-linux-profile` by default. The user must log into ChatGPT in that profile once; subsequent runs reuse it.
+
+If the user wants to use an existing Linux Chrome profile, ask which visible Chrome profile they use before running the live bridge. Map that visible profile to Chrome's profile directory, then set `CODEXGPT_CHROME_USER_DATA_DIR` and `CODEXGPT_CHROME_PROFILE_DIRECTORY`; profile directories are often named `Default` or `Profile 1`, not the visible profile name. If that profile is already open normally, do not assume CodexGPT can attach to it; Chrome must expose the selected remote-debugging port for the bridge to control it.
 
 ## Suggested Use
 
