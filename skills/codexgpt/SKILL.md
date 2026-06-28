@@ -34,7 +34,7 @@ This is browser automation, not a web API. It cannot bypass login, CAPTCHA, rate
 
 On Ubuntu/Linux, the first Chrome/Chromium run opens a dedicated bridge browser profile at `~/.codex/state/codexgpt/chrome-linux-profile` by default. The user must log into ChatGPT in that profile once; subsequent runs reuse it.
 
-If the user wants to use an existing Linux Chrome profile, ask which visible Chrome profile they use before running the live bridge. Map that visible profile to Chrome's profile directory, then set `CODEXGPT_CHROME_USER_DATA_DIR` and `CODEXGPT_CHROME_PROFILE_DIRECTORY`; profile directories are often named `Default` or `Profile 1`, not the visible profile name. If that profile is already open normally, do not assume CodexGPT can attach to it; Chrome must expose the selected remote-debugging port for the bridge to control it.
+If the user wants to use an existing Linux Chrome profile, ask which visible Chrome profile they use before running the live bridge. Map that visible profile to Chrome's profile directory, then set `CODEXGPT_CHROME_USER_DATA_DIR` and `CODEXGPT_CHROME_PROFILE_DIRECTORY`; profile directories are often named `Default` or `Profile 1`, not the visible profile name. When `CODEXGPT_CHROME_USER_DATA_DIR` points at Chrome's normal Linux profile root, CodexGPT automatically seeds a non-default profile copy so Chrome exposes the selected remote-debugging port.
 
 ## Suggested Use
 

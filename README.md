@@ -64,7 +64,7 @@ export CODEXGPT_CHROME_PROFILE_DIRECTORY="Profile 1"
 
 Ask the user which Chrome profile to use when more than one local profile exists. Chrome profile folder names are often generic, such as `Default` or `Profile 1`, so confirm the visible profile name before choosing one.
 
-If that profile is already open in a normal Chrome session, Chrome may reuse the existing browser and skip the requested DevTools port. Close that Chrome profile first, or start it with the same `CODEXGPT_CHROME_CDP_PORT` remote-debugging port before invoking CodexGPT.
+If that profile points at Chrome's normal Linux profile root, CodexGPT seeds a non-default profile copy under `~/.codex/state/codexgpt/chrome-linux-profile-copies/` before launching Chrome. This avoids recent Chrome protections that can open the visible profile while refusing to expose the requested DevTools port. Set `CODEXGPT_CHROME_PROFILE_COPY_ROOT` to choose a different copy location.
 
 ## How To Use It
 

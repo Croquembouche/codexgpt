@@ -26,13 +26,15 @@ The live browser path needs:
 - On macOS Safari/Chrome: the selected browser's `Allow JavaScript from Apple Events` setting enabled.
 - On Ubuntu/Linux: Chrome or Chromium installed. The bridge uses a dedicated Chrome/Chromium profile at `~/.codex/state/codexgpt/chrome-linux-profile` by default and controls it through a local Chrome DevTools connection.
 
-For Ubuntu/Linux, pass `browser: "chrome"`. The first live run opens the bridge profile; log into ChatGPT in that window once, and later runs reuse that profile. If the user wants an existing Chrome profile instead, ask which visible Chrome profile to use and map it to the Chrome profile directory before running the live bridge. If that profile is already open in a normal Chrome session, Chrome may reuse the existing browser and skip the requested DevTools port; close that profile first, or start it with the same remote-debugging port before invoking CodexGPT.
+For Ubuntu/Linux, pass `browser: "chrome"`. The first live run opens the bridge profile; log into ChatGPT in that window once, and later runs reuse that profile. If the user wants an existing Chrome profile instead, ask which visible Chrome profile to use and map it to the Chrome profile directory before running the live bridge. If that profile points at Chrome's normal Linux profile root, CodexGPT seeds a non-default profile copy before launch so Chrome exposes the requested DevTools port.
 
 Optional Ubuntu/Linux environment variables:
 
 - `CODEXGPT_CHROME_BINARY`: path or command for Chrome/Chromium.
 - `CODEXGPT_CHROME_USER_DATA_DIR`: custom Chrome user-data root, for example `~/.config/google-chrome`.
 - `CODEXGPT_CHROME_PROFILE_DIRECTORY`: Chrome profile directory inside the user-data root, for example `Default` or `Profile 1`.
+- `CODEXGPT_CHROME_SOURCE_USER_DATA_DIR`: optional source Chrome user-data root to copy before launch.
+- `CODEXGPT_CHROME_PROFILE_COPY_ROOT`: optional destination root for copied Linux profiles, default `~/.codex/state/codexgpt/chrome-linux-profile-copies`.
 - `CODEXGPT_CHROME_CDP_HOST`: Chrome DevTools host, default `127.0.0.1`.
 - `CODEXGPT_CHROME_CDP_PORT`: Chrome DevTools port, default `9222`.
 

@@ -166,6 +166,26 @@ def _linux_chrome_user_data_dir() -> Path:
     return Path.home() / ".codex" / "state" / "codexgpt" / "chrome-linux-profile"
 
 
+def _linux_chrome_source_user_data_dir() -> Optional[Path]:
+    value = (
+        os.environ.get("CODEXGPT_CHROME_SOURCE_USER_DATA_DIR")
+        or os.environ.get("SAFARI_CHATGPT_BRIDGE_CHROME_SOURCE_USER_DATA_DIR")
+        or os.environ.get("CHATGPT_BRIDGE_CHROME_SOURCE_USER_DATA_DIR")
+    )
+    return Path(value).expanduser() if value and value.strip() else None
+
+
+def _linux_chrome_profile_copy_root() -> Path:
+    value = (
+        os.environ.get("CODEXGPT_CHROME_PROFILE_COPY_ROOT")
+        or os.environ.get("SAFARI_CHATGPT_BRIDGE_CHROME_PROFILE_COPY_ROOT")
+        or os.environ.get("CHATGPT_BRIDGE_CHROME_PROFILE_COPY_ROOT")
+    )
+    if value and value.strip():
+        return Path(value).expanduser()
+    return Path.home() / ".codex" / "state" / "codexgpt" / "chrome-linux-profile-copies"
+
+
 def _linux_chrome_profile_directory() -> Optional[str]:
     value = (
         os.environ.get("CODEXGPT_CHROME_PROFILE_DIRECTORY")
@@ -173,6 +193,79 @@ def _linux_chrome_profile_directory() -> Optional[str]:
         or os.environ.get("CHATGPT_BRIDGE_CHROME_PROFILE_DIRECTORY")
     )
     return value.strip() if value and value.strip() else None
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return left.expanduser().resolve(strict=False) == right.expanduser().resolve(strict=False)
+
+
+def is_default_linux_chrome_user_data_dir(user_data_dir: Path) -> bool:
+    default_roots = [
+        Path.home() / ".config" / "google-chrome",
+        Path.home() / ".config" / "chromium",
+    ]
+    return any(_same_path(user_data_dir, root) for root in default_roots)
+
+
+def build_linux_chrome_profile_copy_dir(
+    source_user_data_dir: Path,
+    profile_directory: Optional[str],
+    port: int,
+    copy_root: Optional[Path] = None,
+) -> Path:
+    profile_label = "".join(
+        char if char.isalnum() else "-"
+        for char in (profile_directory or "Default")
+    ).strip("-") or "Default"
+    source_key = str(source_user_data_dir.expanduser().resolve(strict=False))
+    digest = hashlib.sha256(f"{source_key}|{profile_directory or ''}|{int(port)}".encode("utf-8")).hexdigest()[:12]
+    return (copy_root or _linux_chrome_profile_copy_root()) / f"{profile_label}-{digest}"
+
+
+def sync_linux_chrome_profile_source(source_user_data_dir: Path, target_user_data_dir: Path) -> None:
+    source = source_user_data_dir.expanduser()
+    target = target_user_data_dir.expanduser()
+    if _same_path(source, target):
+        return
+    if not source.exists():
+        raise SafariAutomationError(f"Chrome source profile directory does not exist: {source}")
+
+    def ignore(_directory: str, names: List[str]) -> set:
+        ignored = set()
+        for name in names:
+            if name.startswith("Singleton") or name.startswith("BrowserMetrics"):
+                ignored.add(name)
+            elif name in {"DevToolsActivePort", "Crash Reports"}:
+                ignored.add(name)
+        return ignored
+
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, target, dirs_exist_ok=True, ignore=ignore)
+
+
+def prepare_linux_chrome_user_data_dir(
+    user_data_dir: Path,
+    profile_directory: Optional[str],
+    port: int,
+) -> Path:
+    source_user_data_dir = _linux_chrome_source_user_data_dir()
+    if source_user_data_dir is None and profile_directory and is_default_linux_chrome_user_data_dir(user_data_dir):
+        source_user_data_dir = user_data_dir
+    if source_user_data_dir is None:
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        return user_data_dir
+
+    if _same_path(source_user_data_dir, user_data_dir):
+        target_user_data_dir = build_linux_chrome_profile_copy_dir(
+            source_user_data_dir=source_user_data_dir,
+            profile_directory=profile_directory,
+            port=port,
+        )
+    else:
+        target_user_data_dir = user_data_dir
+
+    sync_linux_chrome_profile_source(source_user_data_dir, target_user_data_dir)
+    return target_user_data_dir
 
 
 def find_linux_chrome_executable() -> str:
@@ -1138,11 +1231,15 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
         except Exception:
             pass
         executable = self.executable or find_linux_chrome_executable()
-        self.user_data_dir.mkdir(parents=True, exist_ok=True)
+        launch_user_data_dir = prepare_linux_chrome_user_data_dir(
+            user_data_dir=self.user_data_dir,
+            profile_directory=self.profile_directory,
+            port=self.port,
+        )
         args = build_linux_chrome_launch_args(
             executable=executable,
             port=self.port,
-            user_data_dir=self.user_data_dir,
+            user_data_dir=launch_user_data_dir,
             profile_directory=self.profile_directory,
             initial_url=CHATGPT_HOME_URL,
         )
@@ -1161,4 +1258,7 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
             except Exception as exc:
                 last_error = str(exc)
                 time.sleep(0.25)
-        raise SafariAutomationError(f"Timed out waiting for Chrome DevTools endpoint: {last_error}")
+        raise SafariAutomationError(
+            "Timed out waiting for Chrome DevTools endpoint "
+            f"for user data dir {launch_user_data_dir}: {last_error}"
+        )

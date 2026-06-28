@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from codexgpt_bridge.safari import (
     ChromeChatGPTClient,
     LinuxChromeChatGPTClient,
     SafariChatGPTClient,
+    build_linux_chrome_profile_copy_dir,
     build_assert_chatgpt_page_javascript,
     build_choose_file_applescript,
     build_chrome_javascript_applescript,
@@ -22,6 +24,7 @@ from codexgpt_bridge.safari import (
     build_paste_and_submit_applescript,
     build_prompt_javascript,
     classify_javascript_permission_error,
+    prepare_linux_chrome_user_data_dir,
     normalize_browser_name,
     normalize_extracted_response,
 )
@@ -141,6 +144,47 @@ class SafariScriptTests(unittest.TestCase):
         self.assertIn("--profile-directory=Profile 1", args)
         self.assertIn("--no-first-run", args)
         self.assertEqual(args[-1], "https://chatgpt.com/")
+
+    def test_linux_profile_copy_dir_is_stable_and_port_specific(self):
+        source = Path("/home/test/.config/google-chrome")
+        copy_root = Path("/tmp/codexgpt-profile-copies")
+
+        first = build_linux_chrome_profile_copy_dir(source, "Profile 1", 9223, copy_root=copy_root)
+        second = build_linux_chrome_profile_copy_dir(source, "Profile 1", 9223, copy_root=copy_root)
+        different_port = build_linux_chrome_profile_copy_dir(source, "Profile 1", 9224, copy_root=copy_root)
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, different_port)
+        self.assertEqual(first.parent, copy_root)
+        self.assertIn("Profile-1", first.name)
+
+    def test_prepare_linux_chrome_user_data_dir_copies_explicit_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            profile = source / "Profile 1"
+            profile.mkdir(parents=True)
+            (source / "Local State").write_text("{}", encoding="utf-8")
+            (source / "SingletonLock").write_text("lock", encoding="utf-8")
+            (source / "DevToolsActivePort").write_text("9223", encoding="utf-8")
+            (profile / "Preferences").write_text("prefs", encoding="utf-8")
+
+            old_value = os.environ.get("CODEXGPT_CHROME_SOURCE_USER_DATA_DIR")
+            os.environ["CODEXGPT_CHROME_SOURCE_USER_DATA_DIR"] = str(source)
+            try:
+                resolved = prepare_linux_chrome_user_data_dir(target, "Profile 1", 9223)
+            finally:
+                if old_value is None:
+                    os.environ.pop("CODEXGPT_CHROME_SOURCE_USER_DATA_DIR", None)
+                else:
+                    os.environ["CODEXGPT_CHROME_SOURCE_USER_DATA_DIR"] = old_value
+
+            self.assertEqual(resolved, target)
+            self.assertEqual((target / "Local State").read_text(encoding="utf-8"), "{}")
+            self.assertEqual((target / "Profile 1" / "Preferences").read_text(encoding="utf-8"), "prefs")
+            self.assertFalse((target / "SingletonLock").exists())
+            self.assertFalse((target / "DevToolsActivePort").exists())
 
     def test_linux_chrome_client_submits_prompt_with_javascript(self):
         client = RecordingLinuxChromeClient()
