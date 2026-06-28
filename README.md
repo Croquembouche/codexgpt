@@ -1,51 +1,33 @@
 # CodexGPT Bridge
 
-CodexGPT Bridge is a Codex plugin that sends prompts and local files from Codex to your logged-in ChatGPT web session, then brings the visible response and downloaded artifacts back into Codex.
+CodexGPT Bridge lets Codex use your logged-in ChatGPT web session. It sends prompts and local files from Codex into ChatGPT in a real browser, then brings the visible response and downloaded artifacts back into Codex.
 
-It is browser automation, not an API wrapper. It uses the ChatGPT web UI you are already logged into.
+This is useful when you want ChatGPT web features such as your logged-in account, browser-side file upload, generated images, or rich document review without switching back and forth manually.
 
 CodexGPT Bridge is community tooling and is not an official OpenAI product.
 
-## What It Does
-
-- Keeps one ChatGPT web chat per Codex conversation key.
-- Starts a new ChatGPT chat when `start_new_chat` is true.
-- Supports Safari and Chrome on macOS.
-- Supports Chrome and Chromium on Ubuntu/Linux.
-- Uploads local files such as PDFs, images, Markdown, JSON, and code files.
-- Returns visible response text, response HTML, download links, and copied local artifact paths.
-- Stores run history under `~/.codex/state/codexgpt/runs/`.
-
 ## Install
 
-Add this GitHub repo as a Codex plugin marketplace:
+Add this repository as a Codex plugin marketplace, then install the plugin:
 
 ```bash
 codex plugin marketplace add Croquembouche/codexgpt
 codex plugin add codexgpt@codexgpt
 ```
 
-After installing or updating, start a new Codex thread so the plugin tools are loaded.
+Start a new Codex thread after installing so the plugin tools load.
 
-For local development from a clone:
+## First-Time Browser Setup
 
-```bash
-git clone https://github.com/Croquembouche/codexgpt.git
-cd codexgpt
-codex plugin marketplace add "$PWD"
-codex plugin add codexgpt@codexgpt
-```
-
-## Browser Setup
+You need to be logged into ChatGPT in the browser CodexGPT Bridge will control.
 
 ### macOS Safari
 
 1. Log into ChatGPT in Safari.
-2. Enable Safari's `Develop` menu if needed.
-3. Turn on `Develop > Allow JavaScript from Apple Events`.
-4. Allow Codex or your terminal to control Safari when macOS asks.
+2. Turn on `Develop > Allow JavaScript from Apple Events`.
+3. Allow Codex or your terminal to control Safari if macOS asks.
 
-Use the default browser option or pass:
+Use Safari by default, or ask Codex to use:
 
 ```json
 {"browser": "safari"}
@@ -55,86 +37,74 @@ Use the default browser option or pass:
 
 1. Log into ChatGPT in Chrome.
 2. Turn on `View > Developer > Allow JavaScript from Apple Events`.
-3. Allow Codex or your terminal to control Chrome when macOS asks.
+3. Allow Codex or your terminal to control Chrome if macOS asks.
 
-Pass:
+Ask Codex to use:
 
 ```json
 {"browser": "chrome"}
-```
-
-If Chrome's menu toggle does not stick, close Chrome and set its internal preference before reopening:
-
-```bash
-defaults write com.google.Chrome browser.allow_javascript_apple_events -bool true
 ```
 
 ### Ubuntu/Linux Chrome or Chromium
 
-Install Chrome or Chromium, then pass:
+Install Chrome or Chromium, then ask Codex to use:
 
 ```json
 {"browser": "chrome"}
 ```
 
-The first live run opens a dedicated bridge profile at:
+The first run opens a dedicated CodexGPT browser profile. Log into ChatGPT in that window once. Later runs reuse the same profile.
+
+## How To Use It
+
+After installation, ask Codex naturally:
 
 ```text
-~/.codex/state/codexgpt/chrome-linux-profile
+Use CodexGPT Bridge to ask ChatGPT web to summarize this PDF.
 ```
 
-Log into ChatGPT in that browser window once. Later runs reuse the same profile.
-
-Optional Linux environment variables:
-
-```bash
-export CODEXGPT_CHROME_BINARY=/usr/bin/chromium
-export CODEXGPT_CHROME_USER_DATA_DIR="$HOME/.codex/state/codexgpt/chrome-linux-profile"
-export CODEXGPT_CHROME_CDP_HOST=127.0.0.1
-export CODEXGPT_CHROME_CDP_PORT=9222
-```
-
-## Tools
-
-CodexGPT Bridge exposes three MCP tools:
-
-- `send_to_chatgpt_web`
-- `get_chatgpt_bridge_status`
-- `reset_chat_mapping`
-
-## Example
-
-Ask Codex:
+Or:
 
 ```text
-Use CodexGPT Bridge to ask ChatGPT web: summarize this PDF.
+Send this draft to ChatGPT web in Chrome and bring the full answer back here.
 ```
 
-With a direct tool call, the core arguments look like this:
+CodexGPT Bridge can send:
 
-```json
-{
-  "prompt": "Summarize this PDF in five bullets.",
-  "files": ["/absolute/path/to/paper.pdf"],
-  "conversation_key": "my-codex-thread",
-  "browser": "chrome",
-  "start_new_chat": false,
-  "wait_timeout_sec": 180
-}
-```
+- text prompts
+- Markdown
+- JSON
+- code files
+- PDFs
+- images
 
-## Limits
+It can bring back:
 
-CodexGPT Bridge cannot bypass:
+- ChatGPT's visible text response
+- response HTML
+- generated/downloaded files copied into a local run folder
+- the ChatGPT chat URL for continuity
 
-- ChatGPT login
-- CAPTCHA or account checks
-- browser permission prompts
-- file-size limits
-- model limits
-- ChatGPT UI changes
+By default, CodexGPT Bridge keeps using the same ChatGPT web chat for the same Codex conversation. Ask for a new chat when you want a fresh ChatGPT thread.
 
-If the selected browser is logged out or ChatGPT changes its page structure, the bridge returns a recovery message instead of silently guessing.
+## More Documentation
+
+- [Usage guide](docs/USAGE.md)
+- [Detailed plugin reference](docs/PLUGIN_REFERENCE.md)
+
+## Troubleshooting
+
+If something does not work, ask Codex to run `get_chatgpt_bridge_status`.
+
+Most issues are one of these:
+
+- the browser is not logged into ChatGPT
+- macOS browser automation permission has not been allowed
+- Safari or Chrome has not enabled JavaScript from Apple Events
+- Ubuntu/Linux does not have Chrome or Chromium installed
+- ChatGPT changed its web UI
+
+CodexGPT Bridge cannot bypass login, CAPTCHA, file-size limits, model limits, or account checks.
 
 ## Development
 
