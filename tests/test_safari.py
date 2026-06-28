@@ -79,6 +79,81 @@ class RecordingLinuxChromeClient(LinuxChromeChatGPTClient):
         return json.dumps({"ok": True, "url": "https://chatgpt.com/c/linux"})
 
 
+class RecordingLinuxUploadClient(LinuxChromeChatGPTClient):
+    def __init__(self):
+        super().__init__(wait_interval_sec=0)
+        self.upload_settle_sec = 0
+        self.websocket = RecordingCdpWebSocket()
+
+    def assert_chatgpt_page(self):
+        return None
+
+    def _open_cdp_websocket(self, timeout=30):
+        self.websocket.timeout = timeout
+        return self.websocket
+
+    def _current_web_socket_url(self):
+        return "ws://127.0.0.1/devtools/page/upload-test"
+
+
+class RecordingCdpWebSocket:
+    def __init__(self):
+        self.timeout = None
+        self.sessions = 0
+        self.commands = []
+        self._last_method = ""
+
+    def __enter__(self):
+        self.sessions += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def send_json(self, payload):
+        self.commands.append(payload)
+        self._last_method = str(payload.get("method") or "")
+
+    def recv_json(self, expected_id):
+        if self._last_method == "DOM.getDocument":
+            return {"id": expected_id, "result": {"root": {"nodeId": 1}}}
+        if self._last_method == "DOM.querySelector":
+            return {"id": expected_id, "result": {"nodeId": 42}}
+        if self._last_method == "DOM.setFileInputFiles":
+            return {"id": expected_id, "result": {}}
+        return {"id": expected_id, "error": {"message": self._last_method}}
+
+
+class FakeChromeHttpClient:
+    def __init__(self, targets):
+        self._targets = list(targets)
+        self.new_pages = []
+
+    def version(self):
+        return {"Browser": "Chrome/test"}
+
+    def targets(self):
+        return list(self._targets)
+
+    def new_page(self, url):
+        target = {"url": url, "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/new"}
+        self.new_pages.append(url)
+        self._targets.append(target)
+        return target
+
+
+class ReusingLinuxChromeClient(LinuxChromeChatGPTClient):
+    def __init__(self, targets):
+        super().__init__(wait_interval_sec=0)
+        self._http = FakeChromeHttpClient(targets)
+
+    def _ensure_browser(self):
+        return None
+
+    def _wait_for_chatgpt_page(self):
+        return None
+
+
 class SafariScriptTests(unittest.TestCase):
     def test_prompt_javascript_json_encodes_prompt_content(self):
         prompt = 'Line 1\n"quoted" and backslash \\ content'
@@ -88,6 +163,10 @@ class SafariScriptTests(unittest.TestCase):
         self.assertIn(json.dumps(prompt), script)
         self.assertIn("prompt-textarea", script)
         self.assertIn("send-button", script)
+        self.assertIn("async ()", script)
+        self.assertIn("send-button_not_ready", script)
+        self.assertIn("pointerdown", script)
+        self.assertIn("button.click()", script)
 
     def test_open_chat_applescript_activates_safari_for_focused_mode(self):
         script = build_open_chat_applescript("https://chatgpt.com/")
@@ -143,6 +222,7 @@ class SafariScriptTests(unittest.TestCase):
         self.assertIn("--user-data-dir=/tmp/chatgpt-bridge-profile", args)
         self.assertIn("--profile-directory=Profile 1", args)
         self.assertIn("--no-first-run", args)
+        self.assertNotIn("--new-window", args)
         self.assertEqual(args[-1], "https://chatgpt.com/")
 
     def test_linux_profile_copy_dir_is_stable_and_port_specific(self):
@@ -194,6 +274,51 @@ class SafariScriptTests(unittest.TestCase):
         self.assertEqual(len(client.scripts), 1)
         self.assertIn("Hello from Ubuntu", client.scripts[0][0])
         self.assertIn("send-button", client.scripts[0][0])
+        self.assertEqual(client.scripts[0][1], 75)
+
+    def test_linux_chrome_upload_uses_devtools_file_input_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.txt"
+            second = Path(tmp) / "second.json"
+            first.write_text("one", encoding="utf-8")
+            second.write_text("{}", encoding="utf-8")
+            client = RecordingLinuxUploadClient()
+
+            uploaded = client.upload_files([str(first), str(second)])
+
+        self.assertEqual(uploaded, [str(first.resolve()), str(second.resolve())])
+        self.assertEqual(client.websocket.sessions, 1)
+        self.assertEqual([command["method"] for command in client.websocket.commands], [
+            "DOM.getDocument",
+            "DOM.querySelector",
+            "DOM.setFileInputFiles",
+        ])
+        self.assertEqual(client.websocket.commands[-1]["params"]["files"], uploaded)
+
+    def test_linux_open_chat_reuses_existing_chatgpt_target(self):
+        existing = {
+            "url": "https://chatgpt.com/c/existing",
+            "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/existing",
+        }
+        client = ReusingLinuxChromeClient([existing])
+
+        target_url = client.open_chat("https://chatgpt.com/c/existing", start_new_chat=False)
+
+        self.assertEqual(target_url, "https://chatgpt.com/c/existing")
+        self.assertEqual(client._target, existing)
+        self.assertEqual(client._http.new_pages, [])
+
+    def test_linux_open_chat_starts_new_chat_when_requested(self):
+        existing = {
+            "url": "https://chatgpt.com/c/existing",
+            "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/existing",
+        }
+        client = ReusingLinuxChromeClient([existing])
+
+        target_url = client.open_chat(None, start_new_chat=True)
+
+        self.assertEqual(target_url, "https://chatgpt.com/")
+        self.assertEqual(client._http.new_pages, ["https://chatgpt.com/"])
 
     def test_focus_composer_javascript_targets_prompt_editor(self):
         script = build_focus_composer_javascript()
@@ -259,6 +384,11 @@ class SafariScriptTests(unittest.TestCase):
         self.assertIn("innerText", script)
         self.assertIn("hasVisualOutput", script)
         self.assertIn("querySelectorAll('img')", script)
+        self.assertIn("hasAssistant: !!last", script)
+        self.assertIn("scope.querySelectorAll('a[download]", script)
+        self.assertIn("scope.querySelectorAll('button')", script)
+        self.assertIn("/download/i.test(label)", script)
+        self.assertNotIn("hasAssistant: !!last || hasVisualOutput", script)
         self.assertNotIn("document.body;", script)
 
     def test_assert_chatgpt_page_javascript_requires_chatgpt_host(self):

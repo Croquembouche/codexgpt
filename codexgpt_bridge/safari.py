@@ -305,7 +305,6 @@ def build_linux_chrome_launch_args(
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-mode",
-        "--new-window",
     ]
     if profile_directory:
         args.append(f"--profile-directory={profile_directory}")
@@ -540,7 +539,7 @@ def build_prompt_javascript(prompt: str) -> str:
     prompt_json = json.dumps(prompt)
     return textwrap.dedent(
         f"""
-        (() => {{
+        (async () => {{
           const prompt = {prompt_json};
           const selectors = [
             'textarea[data-testid="prompt-textarea"]',
@@ -561,18 +560,45 @@ def build_prompt_javascript(prompt: str) -> str:
             composer.textContent = prompt;
             composer.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: prompt }}));
           }}
+          composer.dispatchEvent(new Event('change', {{ bubbles: true }}));
           const sendSelectors = [
             'button[data-testid="send-button"]',
             'button[aria-label="Send prompt"]',
             'button[aria-label="Send message"]',
             'button[aria-label*="Send"]'
           ];
-          const button = sendSelectors.map((selector) => document.querySelector(selector)).find(Boolean);
+          const findSendButton = () => sendSelectors
+            .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+            .find((candidate) => {{
+              const ariaDisabled = candidate.getAttribute('aria-disabled') === 'true';
+              const disabled = !!candidate.disabled || ariaDisabled;
+              const rect = candidate.getBoundingClientRect();
+              return !disabled && rect.width > 0 && rect.height > 0;
+            }});
+          let button = null;
+          const deadline = Date.now() + 60000;
+          while (Date.now() < deadline) {{
+            button = findSendButton();
+            if (button) break;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }}
           if (!button) {{
-            return JSON.stringify({{ ok: false, reason: 'send-button_not_found' }});
+            const found = sendSelectors
+              .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+              .map((candidate) => ({{
+                text: candidate.innerText || '',
+                aria: candidate.getAttribute('aria-label') || '',
+                disabled: !!candidate.disabled,
+                ariaDisabled: candidate.getAttribute('aria-disabled') || '',
+              }}));
+            return JSON.stringify({{ ok: false, reason: 'send-button_not_ready', found }});
+          }}
+          button.scrollIntoView({{ block: 'center', inline: 'center' }});
+          for (const eventType of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {{
+            button.dispatchEvent(new MouseEvent(eventType, {{ bubbles: true, cancelable: true, view: window }}));
           }}
           button.click();
-          return JSON.stringify({{ ok: true, url: location.href }});
+          return JSON.stringify({{ ok: true, url: location.href, clicked: true }});
         }})();
         """
     ).strip()
@@ -820,19 +846,27 @@ def build_extract_response_javascript() -> str:
             }
           }
           const last = nodes[nodes.length - 1] || null;
-          const scope = last || document;
-          const downloadable = Array.from(document.querySelectorAll('a[download], a[href^="blob:"], a[href*="/backend-api/files/"], a[href*="/file-"]'))
-            .map((a) => ({ text: a.innerText || a.getAttribute('aria-label') || '', href: a.href || '', download: a.getAttribute('download') || '' }));
-          const downloadButtons = Array.from(document.querySelectorAll('button[aria-label*="Download"], button[title*="Download"]'))
-            .map((button) => ({ text: button.innerText || '', aria: button.getAttribute('aria-label') || '', title: button.getAttribute('title') || '' }));
-          const images = Array.from(scope.querySelectorAll('img'))
+          const scope = last || null;
+          const downloadable = scope
+            ? Array.from(scope.querySelectorAll('a[download], a[href^="blob:"], a[href*="/backend-api/files/"], a[href*="/file-"]'))
+              .map((a) => ({ text: a.innerText || a.getAttribute('aria-label') || '', href: a.href || '', download: a.getAttribute('download') || '' }))
+            : [];
+          const downloadButtons = scope ? Array.from(scope.querySelectorAll('button'))
+            .filter((button) => {
+              const label = `${button.innerText || ''} ${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''}`;
+              return /download/i.test(label);
+            })
+            .map((button) => ({ text: button.innerText || '', aria: button.getAttribute('aria-label') || '', title: button.getAttribute('title') || '' }))
+            : [];
+          const images = scope ? Array.from(scope.querySelectorAll('img'))
             .filter((img) => img.src)
-            .map((img) => ({ src: img.src || '', alt: img.alt || '', width: img.naturalWidth || img.width || 0, height: img.naturalHeight || img.height || 0 }));
-          const hasVisualOutput = images.length > 0 || downloadable.length > 0 || downloadButtons.length > 0;
+            .map((img) => ({ src: img.src || '', alt: img.alt || '', width: img.naturalWidth || img.width || 0, height: img.naturalHeight || img.height || 0 }))
+            : [];
+          const hasVisualOutput = !!last && (images.length > 0 || downloadable.length > 0 || downloadButtons.length > 0);
           return JSON.stringify({
             url: location.href,
             title: document.title,
-            hasAssistant: !!last || hasVisualOutput,
+            hasAssistant: !!last,
             text: last ? (last.innerText || '').trim() : '',
             html: last ? (last.innerHTML || '').trim() : '',
             downloadable: downloadable,
@@ -849,6 +883,23 @@ def build_click_downloads_javascript() -> str:
     return textwrap.dedent(
         """
         (() => {
+          let nodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+          if (!nodes.length) {
+            const fallbackSelectors = [
+              'article[data-testid*="conversation-turn"]',
+              '.markdown'
+            ];
+            for (const selector of fallbackSelectors) {
+              nodes = Array.from(document.querySelectorAll(selector)).filter((node) => {
+                return (node.innerText && node.innerText.trim()) || node.querySelector('img');
+              });
+              if (nodes.length) break;
+            }
+          }
+          const scope = nodes[nodes.length - 1] || null;
+          if (!scope) {
+            return JSON.stringify({ ok: true, clicked: [] });
+          }
           const selectors = [
             'a[download]',
             'a[href^="blob:"]',
@@ -859,12 +910,16 @@ def build_click_downloads_javascript() -> str:
           ];
           const targets = [];
           for (const selector of selectors) {
-            for (const node of document.querySelectorAll(selector)) {
+            for (const node of scope.querySelectorAll(selector)) {
               if (!targets.includes(node)) targets.push(node);
             }
           }
+          for (const button of scope.querySelectorAll('button')) {
+            const label = `${button.innerText || ''} ${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''}`;
+            if (/download/i.test(label) && !targets.includes(button)) targets.push(button);
+          }
           const seenImageUrls = new Set();
-          for (const img of Array.from(document.querySelectorAll('img[src*="backend-api/estuary"], img[src*="/backend-api/estuary"], img[src*="/backend-api/files/"]')).slice(-8)) {
+          for (const img of Array.from(scope.querySelectorAll('img[src*="backend-api/estuary"], img[src*="/backend-api/estuary"], img[src*="/backend-api/files/"]')).slice(-8)) {
             if (!img.src || seenImageUrls.has(img.src)) continue;
             seenImageUrls.add(img.src);
             const link = document.createElement('a');
@@ -1164,13 +1219,25 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
     def open_chat(self, chat_url: Optional[str], start_new_chat: bool) -> str:
         target = CHATGPT_HOME_URL if start_new_chat or not chat_url else chat_url
         self._ensure_browser()
-        self._target = self._http.new_page(target)
+        if start_new_chat:
+            self._target = self._http.new_page(target)
+        else:
+            self._target = self._find_chatgpt_target(preferred_url=target) or self._http.new_page(target)
         self._wait_for_chatgpt_page()
         return target
 
+    def upload_files(self, files: Iterable[str]) -> List[str]:
+        paths = [str(Path(file_path).expanduser().resolve()) for file_path in files]
+        if not paths:
+            return []
+        self.assert_chatgpt_page()
+        self._set_file_input_files(paths)
+        time.sleep(float(getattr(self, "upload_settle_sec", 3)))
+        return paths
+
     def submit_prompt(self, prompt: str) -> None:
         self.assert_chatgpt_page()
-        raw = self._run_js(build_prompt_javascript(prompt), timeout=30)
+        raw = self._run_js(build_prompt_javascript(prompt), timeout=75)
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -1178,13 +1245,80 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
         if not payload.get("ok"):
             raise SafariAutomationError(str(payload.get("reason", "prompt submit failed")))
 
-    def _run_js(self, javascript: str, timeout: int = 30) -> str:
+    def _set_file_input_files(self, paths: List[str]) -> None:
+        web_socket_url = self._current_web_socket_url()
+        with self._open_cdp_websocket(timeout=60) as ws:
+            document = self._send_cdp_command(
+                ws,
+                1,
+                "DOM.getDocument",
+                {"depth": -1, "pierce": True},
+            )
+            root = document.get("root", {}) if isinstance(document, dict) else {}
+            root_node_id = root.get("nodeId")
+            if not root_node_id:
+                raise SafariAutomationError("Chrome DevTools did not return a document root node.")
+            selector = '#upload-files, input[type="file"]:not([accept]), input[type="file"]'
+            query = self._send_cdp_command(
+                ws,
+                2,
+                "DOM.querySelector",
+                {"nodeId": root_node_id, "selector": selector},
+            )
+            node_id = query.get("nodeId") if isinstance(query, dict) else None
+            if not node_id:
+                raise SafariAutomationError("file_input_not_found")
+            self._send_cdp_command(
+                ws,
+                3,
+                "DOM.setFileInputFiles",
+                {"nodeId": node_id, "files": paths},
+            )
+
+    def _cdp_command(
+        self,
+        method: str,
+        params: Optional[Dict[str, object]] = None,
+        timeout: int = 30,
+    ) -> Dict[str, object]:
+        with self._open_cdp_websocket(timeout=timeout) as ws:
+            return self._send_cdp_command(ws, 1, method, params or {})
+
+    def _open_cdp_websocket(self, timeout: int = 30) -> ChromeDevToolsWebSocket:
+        return ChromeDevToolsWebSocket(self._current_web_socket_url(), timeout=timeout)
+
+    def _send_cdp_command(
+        self,
+        ws: ChromeDevToolsWebSocket,
+        command_id: int,
+        method: str,
+        params: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        ws.send_json(
+            {
+                "id": command_id,
+                "method": method,
+                "params": params or {},
+            }
+        )
+        payload = ws.recv_json(command_id)
+        if payload.get("error"):
+            raise SafariAutomationError(f"Chrome DevTools {method} failed: {payload['error']}")
+        result = payload.get("result", {})
+        if not isinstance(result, dict):
+            raise SafariAutomationError(f"Chrome DevTools {method} returned unexpected payload: {payload!r}")
+        return result
+
+    def _current_web_socket_url(self) -> str:
         target = self._current_target()
         web_socket_url = str(target.get("webSocketDebuggerUrl") or "")
         if not web_socket_url:
             raise SafariAutomationError("Chrome DevTools target did not include a WebSocket URL.")
+        return web_socket_url
+
+    def _run_js(self, javascript: str, timeout: int = 30) -> str:
         command_id = 1
-        with ChromeDevToolsWebSocket(web_socket_url, timeout=timeout) as ws:
+        with ChromeDevToolsWebSocket(self._current_web_socket_url(), timeout=timeout) as ws:
             ws.send_json(
                 {
                     "id": command_id,
@@ -1216,13 +1350,29 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
         self._ensure_browser()
         if self._target:
             return self._target
+        existing = self._find_chatgpt_target()
+        if existing:
+            self._target = existing
+            return existing
+        self._target = self._http.new_page(CHATGPT_HOME_URL)
+        return self._target
+
+    def _find_chatgpt_target(self, preferred_url: Optional[str] = None) -> Optional[Dict[str, object]]:
+        candidates: List[Dict[str, object]] = []
         for target in self._http.targets():
             url = str(target.get("url") or "")
             if "chatgpt.com" in url and target.get("webSocketDebuggerUrl"):
-                self._target = target
+                candidates.append(target)
+        if not candidates:
+            return None
+        if preferred_url:
+            for target in candidates:
+                if str(target.get("url") or "") == preferred_url:
+                    return target
+        for target in candidates:
+            if str(target.get("url") or "").startswith("https://chatgpt.com/c/"):
                 return target
-        self._target = self._http.new_page(CHATGPT_HOME_URL)
-        return self._target
+        return candidates[-1]
 
     def _ensure_browser(self) -> None:
         try:
@@ -1241,7 +1391,6 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
             port=self.port,
             user_data_dir=launch_user_data_dir,
             profile_directory=self.profile_directory,
-            initial_url=CHATGPT_HOME_URL,
         )
         self._process = subprocess.Popen(
             args,
