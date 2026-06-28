@@ -27,6 +27,14 @@ class SafariAutomationError(RuntimeError):
     pass
 
 
+class NoOpFocusManager:
+    def capture_frontmost_app(self) -> Optional[str]:
+        return None
+
+    def restore_app(self, app_name: Optional[str]) -> None:
+        return
+
+
 class MacOSFocusManager:
     def capture_frontmost_app(self) -> Optional[str]:
         try:
@@ -34,7 +42,7 @@ class MacOSFocusManager:
                 'tell application "System Events" to return name of first application process whose frontmost is true',
                 timeout=10,
             )
-        except SafariAutomationError:
+        except (SafariAutomationError, OSError):
             return None
 
     def restore_app(self, app_name: Optional[str]) -> None:
@@ -42,7 +50,7 @@ class MacOSFocusManager:
             return
         try:
             _osascript(f'tell application {json.dumps(app_name)} to activate', timeout=10)
-        except SafariAutomationError:
+        except (SafariAutomationError, OSError):
             return
 
 
@@ -158,6 +166,15 @@ def _linux_chrome_user_data_dir() -> Path:
     return Path.home() / ".codex" / "state" / "codexgpt" / "chrome-linux-profile"
 
 
+def _linux_chrome_profile_directory() -> Optional[str]:
+    value = (
+        os.environ.get("CODEXGPT_CHROME_PROFILE_DIRECTORY")
+        or os.environ.get("SAFARI_CHATGPT_BRIDGE_CHROME_PROFILE_DIRECTORY")
+        or os.environ.get("CHATGPT_BRIDGE_CHROME_PROFILE_DIRECTORY")
+    )
+    return value.strip() if value and value.strip() else None
+
+
 def find_linux_chrome_executable() -> str:
     explicit = (
         os.environ.get("CODEXGPT_CHROME_BINARY")
@@ -186,6 +203,7 @@ def build_linux_chrome_launch_args(
     port: int,
     user_data_dir: Path,
     initial_url: Optional[str] = None,
+    profile_directory: Optional[str] = None,
 ) -> List[str]:
     args = [
         executable,
@@ -196,6 +214,8 @@ def build_linux_chrome_launch_args(
         "--disable-background-mode",
         "--new-window",
     ]
+    if profile_directory:
+        args.append(f"--profile-directory={profile_directory}")
     if initial_url:
         args.append(initial_url)
     return args
@@ -1035,12 +1055,14 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
         host: Optional[str] = None,
         port: Optional[int] = None,
         user_data_dir: Optional[Path] = None,
+        profile_directory: Optional[str] = None,
         executable: Optional[str] = None,
     ):
         super().__init__(wait_interval_sec=wait_interval_sec)
         self.host = host or _linux_chrome_host()
         self.port = int(port or _linux_chrome_port())
         self.user_data_dir = Path(user_data_dir).expanduser() if user_data_dir else _linux_chrome_user_data_dir()
+        self.profile_directory = profile_directory or _linux_chrome_profile_directory()
         self.executable = executable
         self._http = ChromeDevToolsHttpClient(self.host, self.port)
         self._process: Optional[subprocess.Popen] = None
@@ -1121,6 +1143,7 @@ class LinuxChromeChatGPTClient(SafariChatGPTClient):
             executable=executable,
             port=self.port,
             user_data_dir=self.user_data_dir,
+            profile_directory=self.profile_directory,
             initial_url=CHATGPT_HOME_URL,
         )
         self._process = subprocess.Popen(
